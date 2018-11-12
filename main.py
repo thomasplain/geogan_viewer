@@ -58,6 +58,7 @@ class Window(Frame):
         self.input_image_pane.image = blank_image_tk
         self.input_image_pane.pack(fill=BOTH, expand=1)
         self.input_image_pane.place(x=0, y=40)
+        self.input_image_pane.bind('<B1-Motion>', self.update_mask_pos)
 
         self.output_div_image_pane = Label(self.master, image=blank_image_tk, height=255, width=512)
         self.output_div_image_pane.image = blank_image_tk
@@ -69,7 +70,7 @@ class Window(Frame):
         self.output_disc_image_pane.pack(fill=BOTH, expand=1)
         self.output_disc_image_pane.place(x=540, y=340)
 
-        self.slider = Scale(self.master, from_=0, to=100, orient=HORIZONTAL, command=self.display_discrete_image)
+        self.slider = Scale(self.master, from_=0, to=100, orient=HORIZONTAL, command=self.display_discrete_output)
         self.slider.configure(length=300, sliderlength=30, resolution=0.1)
         self.slider.place(x=630, y=630)
         self.slider.pack()
@@ -119,7 +120,72 @@ class Window(Frame):
         self.arch.model = self.arch.model.float()
 
 
-    def display_discrete_image(self, slider_value):
+    def update_mask_pos(self, event):
+        x, y = event.x, event.y
+
+        x -= 32
+        y -= 32
+
+        self.display_discrete_input(x, y)
+        self.display_div_output(x, y)
+        self.display_discrete_output(self.slider.get())
+
+
+    def display_discrete_input(self, *args):
+        input_display_im = self.input_im.copy()
+
+        input_display_im[:, :, 0][np.where(input_display_im[:, :, 1])] = 1
+        input_display_im[:, :, 2][np.where(input_display_im[:, :, 1])] = 1
+
+        if len(args) > 0:
+            x, y = args
+            mask_size = 64
+
+            # Left
+            input_display_im[y:y+mask_size, x-1:x+1, 1] = 1
+            input_display_im[y:y+mask_size, x-1:x+1, 0] = 0
+            input_display_im[y:y+mask_size, x-1:x+1, 2] = 0
+
+            # Right
+            input_display_im[y:y+mask_size, x+mask_size-1:x+mask_size+1, 1] = 1
+            input_display_im[y:y+mask_size, x+mask_size-1:x+mask_size+1, 0] = 0
+            input_display_im[y:y+mask_size, x+mask_size-1:x+mask_size+1, 2] = 0
+
+            # Top
+            input_display_im[y-1:y+1, x:x+mask_size, 1] = 1
+            input_display_im[y-1:y+1, x:x+mask_size, 0] = 0
+            input_display_im[y-1:y+1, x:x+mask_size, 2] = 0
+
+            # Bottom
+            input_display_im[y+mask_size-1:y+mask_size+1, x:x+mask_size, 1] = 1
+            input_display_im[y+mask_size-1:y+mask_size+1, x:x+mask_size, 0] = 0
+            input_display_im[y+mask_size-1:y+mask_size+1, x:x+mask_size, 2] = 0
+
+        image = Image.fromarray(input_display_im.astype(np.uint8) * 255)
+        in_image_tk = ImageTk.PhotoImage(image=image)
+        self.input_image_pane.place(x=256-image.width/2)
+        self.input_image_pane.configure(height=image.height, width=image.width, image=in_image_tk)
+        self.input_image_pane.image = in_image_tk
+
+
+    def display_div_output(self, *args):
+        masked_input = self.input_im.copy()
+
+        if len(args) > 0:
+            x, y = args
+            mask_size = 64
+            masked_input[y:y+mask_size, x:x+mask_size, :] = 0
+
+        self.div_im = self.arch.model(torch.from_numpy(masked_input.transpose(2, 0, 1)).unsqueeze(0).float().cuda())
+        self.div_im = self.div_im.detach().cpu().data.squeeze().numpy().transpose(1, 2, 0)[:, :, 0]
+        self.div_im = np.interp(self.div_im, [self.div_im.min(), 0, self.div_im.max()], [-1, 0, 1])
+        image = Image.fromarray(((self.div_im + 1) / 2 * 255).astype(np.uint8))
+        out_image_tk = ImageTk.PhotoImage(image=image)
+        self.output_div_image_pane.configure(image=out_image_tk)
+        self.output_div_image_pane.image = out_image_tk
+
+
+    def display_discrete_output(self, slider_value):
         thresh = np.interp(slider_value, [0, 100], [0, 1.0])
 
         ridge_layer = np.ones(self.div_im.shape, dtype=bool)
@@ -144,25 +210,10 @@ class Window(Frame):
         pkl_file = random.sample(self.files, 1)[0]
         data = torch.load(pkl_file)
 
-        disc_im = data['A']
-        disc_im[:, :, 0][np.where(disc_im[:, :, 1])] = 1
-        disc_im[:, :, 2][np.where(disc_im[:, :, 1])] = 1
-        image = Image.fromarray(disc_im.astype(np.uint8) * 255)
-        in_image_tk = ImageTk.PhotoImage(image=image)
-        self.input_image_pane.configure(image=in_image_tk)
-        self.input_image_pane.image = in_image_tk
-
-        self.div_im = self.arch.model(torch.from_numpy(data['A'].transpose(2, 0, 1)).unsqueeze(0).float())
-        self.div_im = self.div_im.detach().data.squeeze().numpy().transpose(1, 2, 0)[:,:,0]
-        self.div_im = np.interp(self.div_im, [self.div_im.min(), 0, self.div_im.max()], [-1, 0, 1])
-
-        image = Image.fromarray(((self.div_im + 1) / 2 * 255).astype(np.uint8))
-        out_image_tk = ImageTk.PhotoImage(image=image)
-        self.output_div_image_pane.configure(image=out_image_tk)
-        self.output_div_image_pane.image = out_image_tk
-
-        self.display_discrete_image(self.slider.get())
-
+        self.input_im = data['A']
+        self.display_discrete_input()
+        self.display_div_output()
+        self.display_discrete_output(self.slider.get())
 
 
 root = Tk()

@@ -11,6 +11,8 @@ class Model(nn.Module):
         nn.Module.__init__(self)
         self.model = None
 
+        torch.cuda.init()
+
     def opts_from_slurm(self, filename):
         text = open(filename).read().splitlines()
         start_line = [i for i, line in enumerate(text[:10]) if '- Options -' in line][0]
@@ -28,24 +30,25 @@ class Model(nn.Module):
 
 
     def arch_from_slurm(self, filename):
-        opts_dict = self.opts_from_slurm(filename)
-        input_nc = int(opts_dict['input_nc'])
-        output_nc = int(opts_dict['output_nc'])
-        ngf = int(opts_dict['ngf'])
-        which_model_netG = opts_dict['which_model_netG']
-        norm = opts_dict['norm']
-        use_dropout = not bool(opts_dict['no_dropout'])
-        init = opts_dict['init_type']
+        self.opts_dict = self.opts_from_slurm(filename)
+        input_nc = int(self.opts_dict['input_nc'])
+        output_nc = int(self.opts_dict['output_nc'])
+        ngf = int(self.opts_dict['ngf'])
+        which_model_netG = self.opts_dict['which_model_netG']
+        norm = self.opts_dict['norm']
+        use_dropout = not bool(self.opts_dict['no_dropout'])
+        init = self.opts_dict['init_type']
 
-        with_BCE = bool(opts_dict['with_BCE'])
+        with_BCE = bool(self.opts_dict['with_BCE'])
 
         if with_BCE:
             output_nc += 1
 
         cuda_device = torch.device('cuda')
 
+
         self.model = networks.define_G(input_nc, output_nc, ngf, which_model_netG,
-                                       norm, use_dropout, init, gpu_ids=[])
+                                       norm, use_dropout, init, gpu_ids=[0])
 
 
 
