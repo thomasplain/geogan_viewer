@@ -25,6 +25,8 @@ class Window(Frame):
         self.dataroot = '/home/tom/data/ellipses3/test'
         self.files = glob.glob(os.path.join(self.dataroot, '*.pkl'))
 
+        self.start_dir = os.getcwd()
+
     def init_window(self):
         self.master.title('Geogan viewer')
         self.pack(fill=BOTH, expand=1)
@@ -43,13 +45,16 @@ class Window(Frame):
         archButton.place(x=0, y=0)
 
         chooseDatarootButton = Button(self, text='Choose dataroot', command=self.choose_dataroot)
-        chooseDatarootButton.place(x=120, y=0)
+        chooseDatarootButton.place(x=150, y=0)
 
         load_model_button = Button(self, text='Load model', command=self.load_model)
-        load_model_button.place(x=240, y=0)
+        load_model_button.place(x=270, y=0)
 
         random_image_button = Button(self, text='Get random image', command=self.set_random_image)
         random_image_button.place(x=100, y=300)
+
+        save_images_button = Button(self, text='Save images', command=self.save_current_images)
+        save_images_button.place(x=100, y=360)
 
         blank_image = Image.fromarray(np.ones((256, 512, 3), dtype=np.uint8) * 127)
         blank_image_tk = ImageTk.PhotoImage(image=blank_image)
@@ -78,14 +83,23 @@ class Window(Frame):
 
 
     def build_arch(self):
-        self.arch_file_name = filedialog.askopenfilename(initialdir='/home/tom/data/work/geology/geogan_checkpoints', title='Select architecture description file')
+        dir = filedialog.askopenfilename(initialdir='/home/tom/data/work/geology/geogan_checkpoints', title='Select architecture description file')
+
+        if dir == '':
+            return
+
+        self.arch_file_name = dir
 
         self.arch.arch_from_slurm((self.arch_file_name))
         print(self.arch)
 
 
     def choose_dataroot(self):
-        self.dataroot = filedialog.askdirectory(initialdir=os.getcwd(), title='Choose dataroot')
+        dir = filedialog.askdirectory(initialdir='/home/tom/data/', title='Choose dataroot')
+        if dir == '':
+            return
+
+        self.dataroot = dir
         self.files = glob.glob(os.path.join(self.dataroot, '*.pkl'))
         if len(self.files) == 0:
             messagebox.showerror('Error', "No pickle files in this location")
@@ -96,8 +110,13 @@ class Window(Frame):
         if self.arch == None:
             messagebox.showerror('Error', 'Define an architecture first')
 
-        self.weights_filename = filedialog.askopenfilename(initialdir=os.path.dirname(self.arch_file_name),
+        dir = filedialog.askopenfilename(initialdir=os.path.dirname(self.arch_file_name),
                                                          title='Select model weights file')
+
+        if dir =='':
+            return
+
+        self.weights_filename = dir
 
         weights = torch.load(self.weights_filename)
 
@@ -119,15 +138,21 @@ class Window(Frame):
         self.arch.model.load_state_dict(weights)
         self.arch.model = self.arch.model.float()
 
+        self.display_div_output()
+
 
     def update_mask_pos(self, event):
         x, y = event.x, event.y
 
         x -= 32
         y -= 32
+        mask_size = 64
 
         self.display_discrete_input(x, y)
-        self.display_div_output(x, y)
+        self.masked_input = self.input_im.copy()
+
+        self.masked_input[y:y+mask_size, x:x+mask_size, :] = 0
+        self.display_div_output()
         self.display_discrete_output(self.slider.get())
 
 
@@ -161,6 +186,8 @@ class Window(Frame):
             input_display_im[y+mask_size-1:y+mask_size+1, x:x+mask_size, 0] = 0
             input_display_im[y+mask_size-1:y+mask_size+1, x:x+mask_size, 2] = 0
 
+        self.input_display_im = input_display_im
+
         image = Image.fromarray(input_display_im.astype(np.uint8) * 255)
         in_image_tk = ImageTk.PhotoImage(image=image)
         self.input_image_pane.place(x=256-image.width/2)
@@ -168,15 +195,9 @@ class Window(Frame):
         self.input_image_pane.image = in_image_tk
 
 
-    def display_div_output(self, *args):
-        masked_input = self.input_im.copy()
+    def display_div_output(self):
 
-        if len(args) > 0:
-            x, y = args
-            mask_size = 64
-            masked_input[y:y+mask_size, x:x+mask_size, :] = 0
-
-        self.div_im = self.arch.model(torch.from_numpy(masked_input.transpose(2, 0, 1)).unsqueeze(0).float().cuda())
+        self.div_im = self.arch.model(torch.from_numpy(self.masked_input.transpose(2, 0, 1)).unsqueeze(0).float().cuda())
         self.div_im = self.div_im.detach().cpu().data.squeeze().numpy().transpose(1, 2, 0)[:, :, 0]
         self.div_im = np.interp(self.div_im, [self.div_im.min(), 0, self.div_im.max()], [-1, 0, 1])
         image = Image.fromarray(((self.div_im + 1) / 2 * 255).astype(np.uint8))
@@ -186,12 +207,12 @@ class Window(Frame):
 
 
     def display_discrete_output(self, slider_value):
-        thresh = np.interp(slider_value, [0, 100], [0, 1.0])
+        self.thresh = np.interp(slider_value, [0, 100], [0, 1.0])
 
         ridge_layer = np.ones(self.div_im.shape, dtype=bool)
         sub_layer = np.ones(self.div_im.shape, dtype=bool)
-        ridge_layer[np.where(self.div_im < -thresh)] = False
-        sub_layer[np.where(self.div_im > thresh)] = False
+        ridge_layer[np.where(self.div_im < -self.thresh)] = False
+        sub_layer[np.where(self.div_im > self.thresh)] = False
         plate_layer = np.logical_and(ridge_layer, sub_layer)
 
         out_disc = np.dstack((ridge_layer, plate_layer, sub_layer)).astype(np.uint8) * 255
@@ -207,13 +228,33 @@ class Window(Frame):
             messagebox.showinfo('Error', 'Set dataroot first')
             return
 
-        pkl_file = random.sample(self.files, 1)[0]
-        data = torch.load(pkl_file)
+        self.pkl_file = random.sample(self.files, 1)[0]
+        data = torch.load(self.pkl_file)
 
         self.input_im = data['A']
+        self.masked_input = self.input_im.copy()
         self.display_discrete_input()
         self.display_div_output()
         self.display_discrete_output(self.slider.get())
+
+    def save_current_images(self):
+        model_name, checkpoint = self.weights_filename.split('/')[-2:]
+        epoch = checkpoint.split('_')[0]
+
+        series_no, _ = os.path.basename(self.pkl_file).split('.')
+
+        save_dir = os.path.join(self.start_dir, 'saved_images', model_name, 'epoch_{}'.format(epoch))
+        try:
+            os.mkdirs(save_dir)
+        except:
+            pass
+
+        plt.imsave(os.path.join(save_dir, 'series_{}_ground_truth_one_hot.png'.format(series_no)), self.input_display_im)
+        plt.imsave(os.path.join(save_dir, 'series_{}_output_divergence.png'.format(series_no)), self.input_im)
+        plt.imsave(os.path.join(save_dir, 'series_{}_output_one_hot_thresh_{}.png'.format(series_no, self.thresh)), self.input_im)
+
+        print('Saved 3 images to {}'.format(save_dir))
+
 
 
 root = Tk()
