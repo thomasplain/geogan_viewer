@@ -36,10 +36,10 @@ class Model(nn.Module):
         ngf = int(self.opts_dict['ngf'])
         which_model_netG = self.opts_dict['which_model_netG']
         norm = self.opts_dict['norm']
-        use_dropout = not bool(self.opts_dict['no_dropout'])
+        use_dropout = not (self.opts_dict['no_dropout'] == 'True')
         init = self.opts_dict['init_type']
 
-        with_BCE = bool(self.opts_dict['with_BCE'])
+        with_BCE = self.opts_dict['with_BCE'] == 'True'
 
         if with_BCE:
             output_nc += 1
