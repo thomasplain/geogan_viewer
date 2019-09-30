@@ -3,6 +3,8 @@ from tkinter import *
 from model import Model
 import matplotlib.pyplot as plt
 from collections import OrderedDict
+from matplotlib import cm
+from skimage.morphology import skeletonize
 
 import base64
 from PIL import Image, ImageTk
@@ -26,6 +28,9 @@ class Window(Frame):
         self.files = glob.glob(os.path.join(self.dataroot, '*.pkl'))
 
         self.start_dir = os.getcwd()
+
+        self.mask_size = 64
+        self.mask_pos = (0, 0)
 
     def init_window(self):
         self.master.title('Geogan viewer')
@@ -56,8 +61,14 @@ class Window(Frame):
         load_model_button = Button(self, text='Earth preset', command=self.load_earth_preset)
         load_model_button.place(x=600, y=0)
 
+        load_model_button = Button(self, text='Synthetic preset', command=self.load_synthetic_preset)
+        load_model_button.place(x=750, y=0)
+
         random_image_button = Button(self, text='Get random image', command=self.set_random_image)
         random_image_button.place(x=100, y=300)
+
+        refresh_button = Button(self, text='Refresh image', command=self.refresh)
+        refresh_button.place(x=250, y=300)
 
         save_images_button = Button(self, text='Save images', command=self.save_current_images)
         save_images_button.place(x=100, y=360)
@@ -89,8 +100,12 @@ class Window(Frame):
         self.flip_channels = IntVar()
         self.invert_checkbox = Checkbutton(self.master, text='Flip channels', variable=self.flip_channels,
                                            command=self.display_discrete_output)
-        # self.invert_checkbox.place(x=self.slider.winfo_rootx()+self.slider.winfo_width(), y=self.slider.winfo_rooty())
         self.invert_checkbox.place(x=800, y=610)
+        self.skeletonise = IntVar()
+        self.skeletonise_checkbox = Checkbutton(self.master, text='Skeletonise', variable=self.skeletonise,
+                                           command=self.display_discrete_output)
+        self.skeletonise_checkbox.place(x=950, y=610)
+        # self.invert_checkbox.place(x=self.slider.winfo_rootx()+self.slider.winfo_width(), y=self.slider.winfo_rooty())
         # self.invert_checkbox.pack()
 
 
@@ -152,18 +167,40 @@ class Window(Frame):
 
         x = max(0, x)
         y = max(0, y)
+        x = min(self.input_im.shape[1] - self.mask_size, x)
+        y = min(self.input_im.shape[0] - self.mask_size, y)
 
-        mask_size = 64
-        x = min(self.input_im.shape[1] - mask_size, x)
-        y = min(self.input_im.shape[0] - mask_size, y)
-
+        self.mask_pos = (x, y)
         self.display_discrete_input(x, y)
         self.masked_input = self.input_im.copy()
 
-        self.masked_input[y:y+mask_size, x:x+mask_size, :] = 0
+        self.masked_input[y:y + self.mask_size, x:x + self.mask_size, :] = 0
         self.display_div_output()
         self.display_discrete_output(self.slider.get())
 
+    def draw_mask(self, im):
+        x, y = self.mask_pos
+        # Left
+        im[y:y+self.mask_size, x, 0] = 0.498
+        im[y:y+self.mask_size, x, 1] = 0
+        im[y:y+self.mask_size, x, 2] = 0
+
+        # Right
+        im[y:y+self.mask_size, x+self.mask_size, 0] = 0.498
+        im[y:y+self.mask_size, x+self.mask_size, 1] = 0
+        im[y:y+self.mask_size, x+self.mask_size, 2] = 0
+
+        # Top
+        im[y, x:x+self.mask_size, 0] = 0.498
+        im[y, x:x+self.mask_size, 1] = 0
+        im[y, x:x+self.mask_size, 2] = 0
+
+        # Bottom
+        im[y+self.mask_size, x:x+self.mask_size, 0] = 0.498
+        im[y+self.mask_size, x:x+self.mask_size, 1] = 0
+        im[y+self.mask_size, x:x+self.mask_size, 2] = 0
+
+        return im
 
     def display_discrete_input(self, *args):
         input_display_im = self.input_im.copy()
@@ -172,28 +209,7 @@ class Window(Frame):
         input_display_im[:, :, 2][np.where(input_display_im[:, :, 1])] = 1
 
         if len(args) > 0:
-            x, y = args
-            mask_size = 64
-
-            # Left
-            input_display_im[y:y+mask_size, x-1:x+1, 1] = 1
-            input_display_im[y:y+mask_size, x-1:x+1, 0] = 0
-            input_display_im[y:y+mask_size, x-1:x+1, 2] = 0
-
-            # Right
-            input_display_im[y:y+mask_size, x+mask_size-1:x+mask_size+1, 1] = 1
-            input_display_im[y:y+mask_size, x+mask_size-1:x+mask_size+1, 0] = 0
-            input_display_im[y:y+mask_size, x+mask_size-1:x+mask_size+1, 2] = 0
-
-            # Top
-            input_display_im[y-1:y+1, x:x+mask_size, 1] = 1
-            input_display_im[y-1:y+1, x:x+mask_size, 0] = 0
-            input_display_im[y-1:y+1, x:x+mask_size, 2] = 0
-
-            # Bottom
-            input_display_im[y+mask_size-1:y+mask_size+1, x:x+mask_size, 1] = 1
-            input_display_im[y+mask_size-1:y+mask_size+1, x:x+mask_size, 0] = 0
-            input_display_im[y+mask_size-1:y+mask_size+1, x:x+mask_size, 2] = 0
+            input_display_im = self.draw_mask(input_display_im)
 
         self.input_display_im = input_display_im
 
@@ -222,6 +238,9 @@ class Window(Frame):
         sub_layer = np.ones(self.div_im.shape, dtype=bool)
         ridge_layer[np.where(self.div_im < -self.thresh)] = False
         sub_layer[np.where(self.div_im > self.thresh)] = False
+        if self.skeletonise.get() > 0:
+            ridge_layer = 1 - skeletonize(1 - ridge_layer)
+            sub_layer = 1 - skeletonize(1 - sub_layer)
         plate_layer = np.logical_and(ridge_layer, sub_layer)
 
         if self.flip_channels.get() > 0:
@@ -236,6 +255,9 @@ class Window(Frame):
         self.output_disc_image_pane.configure(image=out_disc_image_tk)
         self.output_disc_image_pane.image = out_disc_image_tk
 
+    def refresh(self, *args):
+        self.display_div_output()
+        self.display_discrete_output(self.slider.get())
 
     def set_random_image(self):
         if self.dataroot == None or len(self.files) == 0:
@@ -246,6 +268,7 @@ class Window(Frame):
         data = torch.load(self.pkl_file)
 
         self.input_im = data['A']
+        self.gt_div = data['A_DIV']
         self.masked_input = self.input_im.copy()
         self.display_discrete_input()
         self.display_div_output()
@@ -263,9 +286,23 @@ class Window(Frame):
         except:
             pass
 
+        out_div_file = 'series_{}_output_divergence_{}.png'.format(series_no, '{}')
+        out_div_count = len(glob.glob(os.path.join(save_dir, out_div_file.format('*'))))
+        out_div_file = out_div_file.format('{:03}')
+        out_div_img = self.draw_mask(cm.seismic(((self.div_im + 1) / 2 * 255).astype(np.uint8)))
+
+        gt_div_file = 'series_{}_gt_divergence.png'.format(series_no)
+        gt_div_img = self.draw_mask(cm.seismic(((self.gt_div + 1) / 2 * 255).astype(np.uint8)))
+
+        out_disc_file = 'series_{}_output_one_hot_thresh_{:.4}_{}.png'.format(series_no, self.thresh, '{}')
+        out_disc_count = len(glob.glob(os.path.join(save_dir, out_disc_file.format('*'))))
+        out_disc_file = out_disc_file.format('{:03}')
+        out_disc_img = self.draw_mask(self.out_disc)
+
         plt.imsave(os.path.join(save_dir, 'series_{}_ground_truth_one_hot.png'.format(series_no)), self.input_display_im)
-        plt.imsave(os.path.join(save_dir, 'series_{}_output_divergence.png'.format(series_no)), ((self.div_im + 1) / 2 * 255).astype(np.uint8), cmap='seismic')
-        plt.imsave(os.path.join(save_dir, 'series_{}_output_one_hot_thresh_{}.png'.format(series_no, self.thresh)), self.out_disc)
+        plt.imsave(os.path.join(save_dir, gt_div_file.format(out_div_count)), gt_div_img)
+        plt.imsave(os.path.join(save_dir, out_div_file.format(out_div_count)), out_div_img)
+        plt.imsave(os.path.join(save_dir, out_disc_file.format(out_disc_count)), out_disc_img)
 
         print('Saved 3 images to {}'.format(save_dir))
 
@@ -289,6 +326,18 @@ class Window(Frame):
         self.collect_images()
 
         self.weights_filename = "/media/data/work/geology/geogan_checkpoints/test_no_weighting_ex_2/2000_net_G.pth"
+        self.load_weights()
+
+        self.set_random_image()
+
+    def load_synthetic_preset(self):
+        self.arch_file_name = "/media/data/work/geology/geogan_checkpoints/test_no_weighting_ex_2/slurm-18072.out"
+        self.arch.arch_from_slurm((self.arch_file_name))
+
+        self.dataroot = "/home/tom/data/old_pytorch_records/test"
+        self.collect_images()
+
+        self.weights_filename = "/media/data/work/geology/geogan_checkpoints/orig_geo_self_attn/latest_net_G.pth"
         self.load_weights()
 
         self.set_random_image()

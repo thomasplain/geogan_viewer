@@ -14,7 +14,7 @@ class Model(nn.Module):
         torch.cuda.init()
 
     def opts_from_slurm(self, filename):
-        text = open(filename).read().splitlines()
+        text = open(filename, encoding='latin1').read().splitlines()
         start_line = [i for i, line in enumerate(text[:10]) if '- Options -' in line][0]
         end_line = next((i for i, line in enumerate(text) if '- End -' in line))
         opts_text = text[start_line + 1:end_line]
